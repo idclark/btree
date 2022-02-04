@@ -13,3 +13,10 @@ func Test_FindNode(t *testing.T) {
 	mockChild.addItems()
 	mockRoot.addChildNode()
 }
+
+func (n *Node) addItems(keys ...string) *Node {
+	for _, key := range keys {
+		n.items = append(n.items, newItem(key, key))
+	}
+	return n
+}

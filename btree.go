@@ -87,3 +87,10 @@ func (n *Node) findKey(key string) (bool, int) {
 func (n *Node) isLeaf() bool {
 	return len(n.childNodes) == 0
 }
+
+func newItem(key string, value interface{}) *Item {
+	return &Item{
+		key:   key,
+		value: value,
+	}
+}
