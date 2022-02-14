@@ -59,7 +59,7 @@ func (b *Tree) Put(key string, value interface{}) {
 	}
 	// Handle root
 	if b.root.isOverPopulated() {
-		newRoot := newNode(b, []*Item{}, []*Node{b.root})
+		newRoot := NewNode(b, []*Item{}, []*Node{b.root})
 		newRoot.split(b.root, 0)
 		b.root = newRoot
 	}
@@ -70,7 +70,7 @@ func (b *Tree) Remove(key string) {
 	removeItemIndex, nodeToRemove, ancestorIndexes := b.findKey(key, true)
 
 	if nodeToRemove.isLeaf() {
-		nodeToRemove.removeFromLeaf(removeItemIndex)
+		nodeToRemove.removeItemFromLeaf(removeItemIndex)
 	} else {
 		affectedNodes := nodeToRemove.removeItemFromInternal(removeItemIndex)
 		ancestorIndexes = append(ancestorIndexes, affectedNodes...)
@@ -168,6 +168,183 @@ func (n *Node) findKey(key string) (bool, int) {
 		}
 	}
 	return false, len(n.items)
+}
+
+func (n *Node) addItem(item *Item, insertionIndex int) int {
+	if len(n.items) == insertionIndex {
+		n.items = append(n.items, item)
+		return insertionIndex
+	}
+	n.items = append(n.items[:insertionIndex+1], n.items[insertionIndex:]...)
+	n.items[insertionIndex] = item
+	return insertionIndex
+}
+
+func (n *Node) addChild(node *Node, insertionIndex int) {
+	if len(n.childNodes) == insertionIndex {
+		n.childNodes = append(n.childNodes, node)
+
+	}
+	n.childNodes = append(n.childNodes[:insertionIndex+1], n.childNodes[insertionIndex:]...)
+	n.childNodes[insertionIndex] = node
+}
+
+func (n *Node) split(modifiedNode *Node, insertionIndex int) {
+	i := 0
+	nodeSize := n.bucket.minItems
+
+	for modifiedNode.isOverPopulated() {
+		middleItem := modifiedNode.items[nodeSize]
+		var newNode *Node
+		if modifiedNode.isLeaf() {
+			newNode = NewNode(n.bucket, modifiedNode.items[nodeSize+1:], []*Node{})
+			modifiedNode.items = modifiedNode.items[:nodeSize]
+		} else {
+			newNode = NewNode(n.bucket, modifiedNode.items[nodeSize+1:], modifiedNode.childNodes[i+1:])
+			modifiedNode.items = modifiedNode.items[:nodeSize]
+			modifiedNode.childNodes = modifiedNode.childNodes[:nodeSize+1]
+		}
+		n.addItem(middleItem, insertionIndex)
+		if len(n.childNodes) == insertionIndex+1 { // If middle of list, then move items forward
+			n.childNodes = append(n.childNodes, newNode)
+		} else {
+			n.childNodes = append(n.childNodes[:insertionIndex+1], n.childNodes[insertionIndex:]...)
+			n.childNodes[insertionIndex+1] = newNode
+		}
+
+		insertionIndex += 1
+		i += 1
+		modifiedNode = newNode
+	}
+}
+
+func (n *Node) rebalanceRemove(unbalancedNodeIndex int) {
+	pNode := n
+	unbalancedNode := pNode.childNodes[unbalancedNodeIndex]
+
+	// Right rotate
+	var leftNode *Node
+	if unbalancedNodeIndex != 0 {
+		leftNode = pNode.childNodes[unbalancedNodeIndex-1]
+		if len(leftNode.items) > n.bucket.minItems {
+			rotateRight(leftNode, pNode, unbalancedNode, unbalancedNodeIndex)
+			return
+		}
+	}
+
+	// Left Balance
+	var rightNode *Node
+	if unbalancedNodeIndex != len(pNode.childNodes)-1 {
+		rightNode = pNode.childNodes[unbalancedNodeIndex+1]
+		if len(rightNode.items) > n.bucket.minItems {
+			rotateLeft(unbalancedNode, pNode, rightNode, unbalancedNodeIndex)
+			return
+		}
+	}
+
+	merge(pNode, unbalancedNodeIndex)
+}
+
+func (n *Node) removeItemFromLeaf(index int) {
+	n.items = append(n.items[:index], n.items[index+1:]...)
+}
+
+func (n *Node) removeItemFromInternal(index int) []int {
+	affectedNodes := make([]int, 0)
+	affectedNodes = append(affectedNodes, index)
+
+	aNode := n.childNodes[index]
+	for !aNode.isLeaf() {
+		traversingIndex := len(n.childNodes) - 1
+		aNode = n.childNodes[traversingIndex]
+		affectedNodes = append(affectedNodes, traversingIndex)
+	}
+
+	n.items[index] = aNode.items[len(aNode.items)-1]
+	aNode.items = aNode.items[:len(aNode.items)-1]
+	return affectedNodes
+}
+
+func rotateRight(aNode, pNode, bNode *Node, bNodeIndex int) {
+	aNodeItem := aNode.items[len(aNode.items)-1]
+	aNode.items = aNode.items[:len(aNode.items)-1]
+
+	// Get item from parent node and assign the aNodeItem item instead
+	pNodeItemIndex := bNodeIndex - 1
+	if isFirst(bNodeIndex) {
+		pNodeItemIndex = 0
+	}
+	pNodeItem := pNode.items[pNodeItemIndex]
+	pNode.items[pNodeItemIndex] = aNodeItem
+
+	// Assign parent item to b and make it first
+	bNode.items = append([]*Item{pNodeItem}, bNode.items...)
+
+	// If it's a inner leaf then move children as well.
+	if !aNode.isLeaf() {
+		childNodeToShift := aNode.childNodes[len(aNode.childNodes)-1]
+		aNode.childNodes = aNode.childNodes[:len(aNode.childNodes)-1]
+		bNode.childNodes = append([]*Node{childNodeToShift}, bNode.childNodes...)
+	}
+}
+
+func rotateLeft(aNode, pNode, bNode *Node, bNodeIndex int) {
+	bNodeItem := bNode.items[0]
+	bNode.items = bNode.items[1:]
+
+	// Get item from parent node and assign the bNodeItem item instead
+	pNodeItemIndex := bNodeIndex
+	if isLast(bNodeIndex, pNode) {
+		pNodeItemIndex = len(pNode.items) - 1
+	}
+	pNodeItem := pNode.items[pNodeItemIndex]
+	pNode.items[pNodeItemIndex] = bNodeItem
+
+	// Assign parent item to a and make it last
+	aNode.items = append(aNode.items, pNodeItem)
+
+	// If it's a inner leaf then move children as well.
+	if !bNode.isLeaf() {
+		childNodeToShift := bNode.childNodes[0]
+		bNode.childNodes = bNode.childNodes[1:]
+		aNode.childNodes = append(aNode.childNodes, childNodeToShift)
+	}
+}
+
+func merge(pNode *Node, unbalancedNodeIndex int) {
+	unbalancedNode := pNode.childNodes[unbalancedNodeIndex]
+	if unbalancedNodeIndex == 0 {
+
+		aNode := unbalancedNode
+		bNode := pNode.childNodes[unbalancedNodeIndex+1]
+
+		// Take the item from the parent, remove it and add it to the unbalanced node
+		pNodeItem := pNode.items[0]
+		pNode.items = pNode.items[1:]
+		aNode.items = append(aNode.items, pNodeItem)
+
+		//merge the bNode to aNode and remove it. Handle its child nodes as well.
+		aNode.items = append(aNode.items, bNode.items...)
+		pNode.childNodes = append(pNode.childNodes[0:1], pNode.childNodes[2:]...)
+		if !bNode.isLeaf() {
+			aNode.childNodes = append(aNode.childNodes, bNode.childNodes...)
+		}
+	} else {
+
+		bNode := unbalancedNode
+		aNode := pNode.childNodes[unbalancedNodeIndex-1]
+
+		// Take the item from the parent, remove it and add it to the unbalanced node
+		pNodeItem := pNode.items[unbalancedNodeIndex-1]
+		pNode.items = append(pNode.items[:unbalancedNodeIndex-1], pNode.items[unbalancedNodeIndex:]...)
+		aNode.items = append(aNode.items, pNodeItem)
+
+		aNode.items = append(aNode.items, bNode.items...)
+		pNode.childNodes = append(pNode.childNodes[:unbalancedNodeIndex], pNode.childNodes[unbalancedNodeIndex+1:]...)
+		if !aNode.isLeaf() {
+			bNode.childNodes = append(aNode.childNodes, bNode.childNodes...)
+		}
+	}
 }
 
 func (n *Node) isLeaf() bool {
